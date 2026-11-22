@@ -276,6 +276,53 @@ const serviceSchema = z.object({
   images: z.array(webUrl).min(1).max(5),
 });
 
+// ==========================================
+// PUBLIC VISIBILITY (Premium badge + Free plan limit)
+// ==========================================
+// Returns:
+// - premiumVendorIds: vendors with an active Premium plan (show badge)
+// - hiddenServiceIds: services hidden because a Free vendor has more than
+//   3 approved & active services (e.g. after Premium expired).
+//   Only the vendor's 3 newest services stay visible.
+
+const getPublicVisibility = async () => {
+  const premiumVendors = await users
+    .find({
+      role: "vendor",
+      subscriptionPlan: "premium",
+      subscriptionExpiresAt: { $gt: new Date() },
+    })
+    .project({ _id: 1 })
+    .toArray();
+
+  const premiumVendorIds = new Set(
+    premiumVendors.map((vendor) => String(vendor._id))
+  );
+
+  const publicServices = await services
+    .find(publicServiceFilter)
+    .project({ vendorId: 1 })
+    .sort({ createdAt: -1, _id: -1 })
+    .toArray();
+
+  const countPerVendor = {};
+  const hiddenServiceIds = [];
+
+  for (const service of publicServices) {
+    const vendorId = String(service.vendorId);
+
+    if (premiumVendorIds.has(vendorId)) continue;
+
+    countPerVendor[vendorId] = (countPerVendor[vendorId] || 0) + 1;
+
+    if (countPerVendor[vendorId] > FREE_PLAN_SERVICE_LIMIT) {
+      hiddenServiceIds.push(service._id);
+    }
+  }
+
+  return { premiumVendorIds, hiddenServiceIds };
+};
+
 // GET /services
 // Public listing, search, filters, sorting, featured limit
 app.get("/services", async (req, res) => {
@@ -337,13 +384,24 @@ app.get("/services", async (req, res) => {
         ? Math.min(parsedLimit, 100)
         : 24;
 
+    const { premiumVendorIds, hiddenServiceIds } = await getPublicVisibility();
+
+    if (hiddenServiceIds.length > 0) {
+      filter._id = { $nin: hiddenServiceIds };
+    }
+
     const results = await services
       .find(filter)
       .sort(sortBy)
       .limit(safeLimit)
       .toArray();
 
-    res.status(200).json(results);
+    const withBadge = results.map((service) => ({
+      ...service,
+      isPremiumVendor: premiumVendorIds.has(String(service.vendorId)),
+    }));
+
+    res.status(200).json(withBadge);
   } catch (error) {
     console.error("Failed to fetch services:", error);
     res.status(500).json({
@@ -374,7 +432,19 @@ app.get("/services/:id", async (req, res) => {
       });
     }
 
-    res.status(200).json(service);
+    const { premiumVendorIds, hiddenServiceIds } = await getPublicVisibility();
+
+    // Hidden by the Free plan limit (e.g. after Premium expired)
+    if (hiddenServiceIds.some((hiddenId) => hiddenId.equals(service._id))) {
+      return res.status(404).json({
+        message: "Service not found.",
+      });
+    }
+
+    res.status(200).json({
+      ...service,
+      isPremiumVendor: premiumVendorIds.has(String(service.vendorId)),
+    });
   } catch (error) {
     console.error("Failed to fetch service:", error);
     res.status(500).json({
