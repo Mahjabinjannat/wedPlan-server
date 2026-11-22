@@ -26,6 +26,10 @@ const SERVICE_CATEGORIES = [
   "Wedding Fashion",
 ];
 
+// Don't tell visitors which framework the server uses
+app.disable("x-powered-by");
+
+// Only the WedPlan client may call this API from a browser
 app.use(cors({ origin: clientUrl }));
 
 const client = new MongoClient(process.env.MONGODB_URI);
@@ -53,6 +57,9 @@ const publicServiceFilter = {
   status: "approved",
   isActive: true,
 };
+
+// Fields hidden from public service responses (vendor's private email)
+const publicServiceProjection = { vendorEmail: 0 };
 
 // ==========================================
 // STRIPE WEBHOOK
@@ -163,6 +170,9 @@ app.use(express.json());
 
 const JWKS = createRemoteJWKSet(new URL(`${clientUrl}/api/auth/jwks`));
 
+// Better Auth sets the token's issuer and audience to the client's address
+const clientOrigin = new URL(clientUrl).origin;
+
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader) {
@@ -175,8 +185,11 @@ const verifyToken = async (req, res, next) => {
   }
 
   try {
-    // Rejects invalid or expired tokens
-    const { payload } = await jwtVerify(token, JWKS);
+    // Rejects invalid or expired tokens, and tokens made for another app
+    const { payload } = await jwtVerify(token, JWKS, {
+      issuer: clientOrigin,
+      audience: clientOrigin,
+    });
 
     if (!ObjectId.isValid(payload.sub)) {
       return res.status(401).json({ message: "Unauthorized." });
@@ -391,7 +404,7 @@ app.get("/services", async (req, res) => {
     }
 
     const results = await services
-      .find(filter)
+      .find(filter, { projection: publicServiceProjection })
       .sort(sortBy)
       .limit(safeLimit)
       .toArray();
@@ -421,10 +434,13 @@ app.get("/services/:id", async (req, res) => {
       });
     }
 
-    const service = await services.findOne({
-      _id: new ObjectId(id),
-      ...publicServiceFilter,
-    });
+    const service = await services.findOne(
+      {
+        _id: new ObjectId(id),
+        ...publicServiceFilter,
+      },
+      { projection: publicServiceProjection }
+    );
 
     if (!service) {
       return res.status(404).json({
