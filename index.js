@@ -320,6 +320,140 @@ app.post("/vendor/services", verifyToken, verifyVendor, async (req, res) => {
   }
 });
 
+// PATCH /vendor/services/:id - update own service
+// After editing, the service goes back to "pending" for admin review.
+app.patch(
+  "/vendor/services/:id",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: "Invalid service ID." });
+      }
+
+      const parsed = serviceSchema.safeParse(req.body);
+
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: "Please fill in all service fields correctly.",
+        });
+      }
+
+      // Ownership check: the service must belong to this vendor
+      const service = await services.findOne({
+        _id: new ObjectId(id),
+        vendorId: req.user.id,
+      });
+
+      if (!service) {
+        return res.status(404).json({ message: "Service not found." });
+      }
+
+      // A rejected service becomes pending again, so check the limit.
+      if (service.isActive && service.status === "rejected") {
+        const allowed = await canActivateMoreServices(req.user, id);
+        if (!allowed) {
+          return res.status(403).json({ message: limitMessage });
+        }
+      }
+
+      await services.updateOne(
+        { _id: new ObjectId(id), vendorId: req.user.id },
+        {
+          $set: {
+            ...parsed.data,
+            status: "pending",
+            updatedAt: new Date(),
+          },
+        }
+      );
+
+      res.json({ message: "Service updated and sent for admin review." });
+    } catch (error) {
+      console.error("Update service error:", error);
+      res.status(500).json({ message: "Failed to update service." });
+    }
+  }
+);
+
+// PATCH /vendor/services/:id/availability - turn a service on or off
+app.patch(
+  "/vendor/services/:id/availability",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { isActive } = req.body;
+
+      if (!ObjectId.isValid(id) || typeof isActive !== "boolean") {
+        return res.status(400).json({ message: "Invalid request." });
+      }
+
+      const service = await services.findOne({
+        _id: new ObjectId(id),
+        vendorId: req.user.id,
+      });
+
+      if (!service) {
+        return res.status(404).json({ message: "Service not found." });
+      }
+
+      if (isActive) {
+        const allowed = await canActivateMoreServices(req.user, id);
+        if (!allowed) {
+          return res.status(403).json({ message: limitMessage });
+        }
+      }
+
+      await services.updateOne(
+        { _id: new ObjectId(id), vendorId: req.user.id },
+        { $set: { isActive, updatedAt: new Date() } }
+      );
+
+      res.json({
+        message: isActive ? "Service is now available." : "Service is now hidden.",
+      });
+    } catch (error) {
+      console.error("Service availability error:", error);
+      res.status(500).json({ message: "Failed to update availability." });
+    }
+  }
+);
+
+// DELETE /vendor/services/:id - delete own service
+app.delete(
+  "/vendor/services/:id",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: "Invalid service ID." });
+      }
+
+      const result = await services.deleteOne({
+        _id: new ObjectId(id),
+        vendorId: req.user.id,
+      });
+
+      if (result.deletedCount === 0) {
+        return res.status(404).json({ message: "Service not found." });
+      }
+
+      res.json({ message: "Service deleted." });
+    } catch (error) {
+      console.error("Delete service error:", error);
+      res.status(500).json({ message: "Failed to delete service." });
+    }
+  }
+);
+
 app.get("/", (req, res) => {
   res.send("WedPlan server is running!");
 });
