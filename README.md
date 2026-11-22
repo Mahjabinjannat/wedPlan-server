@@ -36,8 +36,8 @@ The Next.js frontend lives in a separate **client** repository.
 |---|---|
 | 🌐 **Live Website** | _https://your-client-url.vercel.app_ |
 | 🖥️ **Live API** | _https://your-server-url.vercel.app_ |
-| 💻 **Client Repository** | _https://github.com/your-username/wedplan-client_ |
-| 🖥️ **Server Repository** | _https://github.com/your-username/wedplan-server_ |
+| 💻 **Client Repository** | https://github.com/Mahjabinjannat/wedPlan-client |
+| 🖥️ **Server Repository** | https://github.com/Mahjabinjannat/wedPlan-server |
 
 ---
 
@@ -169,8 +169,8 @@ Authorization: Bearer <JWT>
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/your-username/wedplan-server.git
-cd wedplan-server
+git clone https://github.com/Mahjabinjannat/wedPlan-server.git
+cd wedPlan-server
 npm install
 ```
 
