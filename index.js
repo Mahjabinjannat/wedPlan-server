@@ -50,12 +50,18 @@ app.get("/services", async (req, res) => {
 
     const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-    // Search by service name
+    // Advanced search: match name, description, category,
+    // location or vendor name
     if (typeof search === "string" && search.trim()) {
-      filter.serviceName = {
-        $regex: escapeRegex(search.trim()),
-        $options: "i",
-      };
+      const keyword = { $regex: escapeRegex(search.trim()), $options: "i" };
+
+      filter.$or = [
+        { serviceName: keyword },
+        { description: keyword },
+        { category: keyword },
+        { location: keyword },
+        { vendorName: keyword },
+      ];
     }
 
     if (typeof category === "string" && category.trim()) {
