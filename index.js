@@ -742,6 +742,61 @@ app.post(
   }
 );
 
+// ==========================================
+// PROFILE
+// ==========================================
+
+// Only these fields can be changed. role, subscriptionPlan, isBlocked, etc.
+// are not in the schema, so zod drops them.
+const profileSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  image: z.union([webUrl, z.literal("")]).optional(),
+  businessName: z.string().trim().max(120).optional(),
+});
+
+// PATCH /profile - update own profile
+app.patch("/profile", verifyToken, async (req, res) => {
+  try {
+    if (req.user.role !== "customer" && req.user.role !== "vendor") {
+      return res.status(403).json({ message: "Forbidden." });
+    }
+
+    const parsed = profileSchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Please enter valid profile details." });
+    }
+
+    const { name, image, businessName } = parsed.data;
+
+    const updates = {
+      name,
+      image: image || null,
+      updatedAt: new Date(),
+    };
+
+    // Only vendors have a business name
+    if (req.user.role === "vendor") {
+      updates.businessName = businessName || "";
+    }
+
+    await users.updateOne({ _id: new ObjectId(req.user.id) }, { $set: updates });
+
+    // Keep the vendor name on their services in sync
+    if (req.user.role === "vendor") {
+      await services.updateMany(
+        { vendorId: req.user.id },
+        { $set: { vendorName: updates.businessName || name } }
+      );
+    }
+
+    res.json({ message: "Profile updated successfully." });
+  } catch (error) {
+    console.error("Update profile error:", error);
+    res.status(500).json({ message: "Failed to update profile." });
+  }
+});
+
 app.get("/", (req, res) => {
   res.send("WedPlan server is running!");
 });
