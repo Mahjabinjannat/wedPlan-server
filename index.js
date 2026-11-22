@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import "dotenv/config";
 import { MongoClient, ObjectId } from "mongodb";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const app = express();
 const port = process.env.PORT || 8000;
@@ -32,6 +33,54 @@ const services = database.collection("services");
 const publicServiceFilter = {
   status: "approved",
   isActive: true,
+};
+
+app.use(express.json());
+
+// ==========================================
+// JWT VERIFICATION MIDDLEWARE
+// ==========================================
+// Better Auth (Next.js client) signs the JWT.
+// We download its public keys once and verify every token with them.
+
+const JWKS = createRemoteJWKSet(new URL(`${clientUrl}/api/auth/jwks`));
+
+const verifyToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).json({ message: "Unauthorized." });
+  }
+
+  const token = authHeader.split(" ")[1];
+  if (!token) {
+    return res.status(401).json({ message: "Unauthorized." });
+  }
+
+  try {
+    // Rejects invalid or expired tokens
+    const { payload } = await jwtVerify(token, JWKS);
+
+    if (!ObjectId.isValid(payload.sub)) {
+      return res.status(401).json({ message: "Unauthorized." });
+    }
+
+    // Always load the user from the database, so a blocked user
+    // or a changed role takes effect immediately.
+    const user = await users.findOne({ _id: new ObjectId(payload.sub) });
+
+    if (!user) {
+      return res.status(401).json({ message: "Unauthorized." });
+    }
+
+    if (user.isBlocked === true) {
+      return res.status(403).json({ message: "Your account is blocked." });
+    }
+
+    req.user = { ...user, id: String(user._id) };
+    next();
+  } catch {
+    return res.status(401).json({ message: "Invalid or expired token." });
+  }
 };
 
 // GET /services
