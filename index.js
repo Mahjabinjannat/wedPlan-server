@@ -54,6 +54,105 @@ const publicServiceFilter = {
   isActive: true,
 };
 
+// ==========================================
+// STRIPE WEBHOOK
+// ==========================================
+// Must be registered BEFORE app.use(express.json()),
+// because Stripe needs the raw request body to verify the signature.
+// Premium is activated ONLY here, never from the success page.
+
+app.post(
+  "/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    let event;
+
+    try {
+      event = stripe.webhooks.constructEvent(
+        req.body,
+        req.headers["stripe-signature"],
+        process.env.STRIPE_WEBHOOK_SECRET
+      );
+    } catch (error) {
+      console.error("Webhook signature failed:", error.message);
+      return res.status(400).send(`Webhook Error: ${error.message}`);
+    }
+
+    try {
+      if (event.type === "checkout.session.completed") {
+        const session = event.data.object;
+        const vendorId = session.metadata?.vendorId;
+
+        if (session.payment_status !== "paid" || !ObjectId.isValid(vendorId)) {
+          return res.json({ received: true });
+        }
+
+        // Skip if this payment was already processed (Stripe can retry).
+        const existing = await transactions.findOne({
+          stripeSessionId: session.id,
+          status: "paid",
+        });
+
+        if (existing) {
+          return res.json({ received: true });
+        }
+
+        await transactions.updateOne(
+          { stripeSessionId: session.id },
+          {
+            $set: {
+              status: "paid",
+              amount: session.amount_total / 100,
+              currency: session.currency,
+              paidAt: new Date(),
+            },
+            $setOnInsert: {
+              vendorId,
+              plan: "premium",
+              stripeSubscriptionId: null,
+              createdAt: new Date(),
+            },
+          },
+          { upsert: true }
+        );
+
+        // If Premium is still active, add 30 days to the current end date.
+        const vendor = await users.findOne({ _id: new ObjectId(vendorId) });
+        const currentExpiry = vendor?.subscriptionExpiresAt
+          ? new Date(vendor.subscriptionExpiresAt)
+          : null;
+        const startFrom =
+          currentExpiry && currentExpiry > new Date() ? currentExpiry : new Date();
+        const expiresAt = new Date(
+          startFrom.getTime() + PREMIUM_DAYS * 24 * 60 * 60 * 1000
+        );
+
+        await users.updateOne(
+          { _id: new ObjectId(vendorId) },
+          {
+            $set: {
+              subscriptionPlan: "premium",
+              subscriptionExpiresAt: expiresAt,
+            },
+          }
+        );
+      }
+
+      if (event.type === "checkout.session.expired") {
+        await transactions.updateOne(
+          { stripeSessionId: event.data.object.id, status: "pending" },
+          { $set: { status: "expired" } }
+        );
+      }
+
+      res.json({ received: true });
+    } catch (error) {
+      console.error("Webhook handling failed:", error);
+      res.status(500).json({ message: "Webhook handling failed." });
+    }
+  }
+);
+
 app.use(express.json());
 
 // ==========================================
