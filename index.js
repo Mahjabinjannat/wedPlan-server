@@ -3,12 +3,18 @@ import cors from "cors";
 import "dotenv/config";
 import { MongoClient, ObjectId } from "mongodb";
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import Stripe from "stripe";
 import { z } from "zod";
 
 const app = express();
 const port = process.env.PORT || 8000;
 const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
 
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+// Premium plan settings (one-time payment, 30 days of Premium)
+const PREMIUM_PRICE_CENTS = 1999; // $19.99
+const PREMIUM_DAYS = 30;
 const FREE_PLAN_SERVICE_LIMIT = 3;
 
 const SERVICE_CATEGORIES = [
@@ -41,6 +47,7 @@ const database = connectedClient.db(process.env.DB_NAME || "wedplanDB");
 // Collections
 const users = database.collection("user");
 const services = database.collection("services");
+const transactions = database.collection("transactions");
 
 const publicServiceFilter = {
   status: "approved",
@@ -573,6 +580,65 @@ app.delete(
     } catch (error) {
       console.error("Admin delete service error:", error);
       res.status(500).json({ message: "Failed to delete service." });
+    }
+  }
+);
+
+// Note: there is intentionally NO route to edit transactions.
+// Payment records are only written by the Stripe webhook.
+
+// ==========================================
+// PAYMENTS
+// ==========================================
+
+// POST /payments/create-checkout-session - vendor upgrades to Premium
+app.post(
+  "/payments/create-checkout-session",
+  verifyToken,
+  verifyVendor,
+  async (req, res) => {
+    try {
+      // The vendor id always comes from the verified token, never the body.
+      const vendorId = req.user.id;
+
+      const session = await stripe.checkout.sessions.create({
+        mode: "payment",
+        customer_email: req.user.email,
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              unit_amount: PREMIUM_PRICE_CENTS,
+              product_data: {
+                name: `WedPlan Premium (${PREMIUM_DAYS} days)`,
+                description: "Unlimited active services and Premium Vendor badge",
+              },
+            },
+            quantity: 1,
+          },
+        ],
+        metadata: { vendorId },
+        success_url: `${clientUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${clientUrl}/payment/cancel`,
+      });
+
+      await transactions.insertOne({
+        vendorId,
+        vendorName: req.user.businessName || req.user.name,
+        vendorEmail: req.user.email,
+        plan: "premium",
+        amount: PREMIUM_PRICE_CENTS / 100,
+        currency: "usd",
+        stripeSessionId: session.id,
+        stripeSubscriptionId: null,
+        status: "pending",
+        createdAt: new Date(),
+      });
+
+      res.json({ url: session.url });
+    } catch (error) {
+      console.error("Create checkout session error:", error);
+      res.status(500).json({ message: "Failed to start payment." });
     }
   }
 );
