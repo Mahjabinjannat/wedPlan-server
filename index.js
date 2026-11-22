@@ -83,6 +83,33 @@ const verifyToken = async (req, res, next) => {
   }
 };
 
+// ==========================================
+// ROLE MIDDLEWARES (use after verifyToken)
+// ==========================================
+
+// Customer bookings currently use Next.js API routes; this is ready
+// for any customer-only Express route.
+const verifyCustomer = (req, res, next) => {
+  if (req.user.role !== "customer") {
+    return res.status(403).json({ message: "Forbidden." });
+  }
+  next();
+};
+
+const verifyVendor = (req, res, next) => {
+  if (req.user.role !== "vendor") {
+    return res.status(403).json({ message: "Forbidden." });
+  }
+  next();
+};
+
+const verifyAdmin = (req, res, next) => {
+  if (req.user.role !== "admin") {
+    return res.status(403).json({ message: "Forbidden." });
+  }
+  next();
+};
+
 // GET /services
 // Public listing, search, filters, sorting, featured limit
 app.get("/services", async (req, res) => {
