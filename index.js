@@ -492,6 +492,91 @@ app.patch(
   }
 );
 
+// ==========================================
+// ADMIN: SERVICES
+// ==========================================
+
+// PATCH /admin/services/:id/status - approve, reject, or set back to pending
+app.patch(
+  "/admin/services/:id/status",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+
+      if (
+        !ObjectId.isValid(id) ||
+        !["pending", "approved", "rejected"].includes(status)
+      ) {
+        return res.status(400).json({ message: "Invalid request." });
+      }
+
+      const service = await services.findOne({ _id: new ObjectId(id) });
+
+      if (!service) {
+        return res.status(404).json({ message: "Service not found." });
+      }
+
+      // A rejected service coming back must respect the vendor's plan limit.
+      if (service.status === "rejected" && status !== "rejected" && service.isActive) {
+        const vendor = ObjectId.isValid(service.vendorId)
+          ? await users.findOne({ _id: new ObjectId(service.vendorId) })
+          : null;
+
+        if (!vendor) {
+          return res.status(409).json({ message: "Vendor account not found." });
+        }
+
+        const allowed = await canActivateMoreServices(vendor, id);
+        if (!allowed) {
+          return res.status(403).json({
+            message: "This vendor already has 3 active services on the Free plan.",
+          });
+        }
+      }
+
+      await services.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { status, updatedAt: new Date() } }
+      );
+
+      res.json({ message: `Service marked as ${status}.` });
+    } catch (error) {
+      console.error("Service status error:", error);
+      res.status(500).json({ message: "Failed to update service status." });
+    }
+  }
+);
+
+// DELETE /admin/services/:id - remove an inappropriate service
+app.delete(
+  "/admin/services/:id",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: "Invalid service ID." });
+      }
+
+      const result = await services.deleteOne({ _id: new ObjectId(id) });
+
+      if (result.deletedCount === 0) {
+        return res.status(404).json({ message: "Service not found." });
+      }
+
+      res.json({ message: "Service deleted." });
+    } catch (error) {
+      console.error("Admin delete service error:", error);
+      res.status(500).json({ message: "Failed to delete service." });
+    }
+  }
+);
+
 app.get("/", (req, res) => {
   res.send("WedPlan server is running!");
 });
