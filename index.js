@@ -890,3 +890,6 @@ app.get("/", (req, res) => {
 app.listen(port, () => {
   console.log(`WedPlan server running on port ${port}`);
 });
+
+// Needed for Vercel-style deployment
+export default app;
