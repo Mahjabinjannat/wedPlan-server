@@ -3,10 +3,22 @@ import cors from "cors";
 import "dotenv/config";
 import { MongoClient, ObjectId } from "mongodb";
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { z } from "zod";
 
 const app = express();
 const port = process.env.PORT || 8000;
 const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
+
+const FREE_PLAN_SERVICE_LIMIT = 3;
+
+const SERVICE_CATEGORIES = [
+  "Photography & Videography",
+  "Wedding Venues",
+  "Decoration & Florist",
+  "Catering Services",
+  "Makeup & Styling",
+  "Wedding Fashion",
+];
 
 app.use(cors({ origin: clientUrl }));
 
@@ -109,6 +121,54 @@ const verifyAdmin = (req, res, next) => {
   }
   next();
 };
+
+// ==========================================
+// HELPERS
+// ==========================================
+
+const isPremiumUser = (user) => {
+  if (user?.subscriptionPlan !== "premium" || !user.subscriptionExpiresAt) {
+    return false;
+  }
+  return new Date(user.subscriptionExpiresAt) > new Date();
+};
+
+// Free vendors can have at most 3 active services.
+// "Active" = isActive is true and the service is not rejected.
+// Pass the service id when checking an existing service,
+// so it is not counted twice.
+const canActivateMoreServices = async (vendor, serviceIdToSkip) => {
+  if (isPremiumUser(vendor)) {
+    return true;
+  }
+
+  const filter = {
+    vendorId: String(vendor._id),
+    isActive: true,
+    status: { $ne: "rejected" },
+  };
+
+  if (serviceIdToSkip) {
+    filter._id = { $ne: new ObjectId(serviceIdToSkip) };
+  }
+
+  const activeCount = await services.countDocuments(filter);
+  return activeCount < FREE_PLAN_SERVICE_LIMIT;
+};
+
+const limitMessage = `Free plan allows ${FREE_PLAN_SERVICE_LIMIT} active services. Upgrade to Premium for unlimited services.`;
+
+// Image links must be normal web addresses (blocks "javascript:" or "data:" links)
+const webUrl = z.url({ protocol: /^https?$/ });
+
+const serviceSchema = z.object({
+  serviceName: z.string().trim().min(3).max(120),
+  category: z.enum(SERVICE_CATEGORIES),
+  description: z.string().trim().min(20).max(3000),
+  price: z.number().positive().max(1000000),
+  location: z.string().trim().min(2).max(120),
+  images: z.array(webUrl).min(1).max(5),
+});
 
 // GET /services
 // Public listing, search, filters, sorting, featured limit
@@ -214,6 +274,49 @@ app.get("/services/:id", async (req, res) => {
     res.status(500).json({
       message: "Failed to fetch service details.",
     });
+  }
+});
+
+// ==========================================
+// VENDOR: SERVICES
+// ==========================================
+
+// POST /vendor/services - create a new service (status: pending)
+app.post("/vendor/services", verifyToken, verifyVendor, async (req, res) => {
+  try {
+    const parsed = serviceSchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Please fill in all service fields correctly.",
+      });
+    }
+
+    const allowed = await canActivateMoreServices(req.user);
+
+    if (!allowed) {
+      return res.status(403).json({ message: limitMessage });
+    }
+
+    const newService = {
+      ...parsed.data,
+      vendorId: req.user.id,
+      vendorName: req.user.businessName || req.user.name,
+      vendorEmail: req.user.email,
+      status: "pending",
+      isActive: true,
+      createdAt: new Date(),
+    };
+
+    const result = await services.insertOne(newService);
+
+    res.status(201).json({
+      message: "Service submitted. It will be visible after admin approval.",
+      serviceId: result.insertedId,
+    });
+  } catch (error) {
+    console.error("Create service error:", error);
+    res.status(500).json({ message: "Failed to create service." });
   }
 });
 
