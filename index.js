@@ -454,6 +454,44 @@ app.delete(
   }
 );
 
+// ==========================================
+// ADMIN: USERS
+// ==========================================
+
+// PATCH /admin/users/:id/block - block or unblock a user
+app.patch(
+  "/admin/users/:id/block",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { isBlocked } = req.body;
+
+      if (!ObjectId.isValid(id) || typeof isBlocked !== "boolean") {
+        return res.status(400).json({ message: "Invalid request." });
+      }
+
+      const target = await users.findOne({ _id: new ObjectId(id) });
+
+      if (!target) {
+        return res.status(404).json({ message: "User not found." });
+      }
+
+      if (target.role === "admin") {
+        return res.status(403).json({ message: "Admin accounts cannot be blocked." });
+      }
+
+      await users.updateOne({ _id: new ObjectId(id) }, { $set: { isBlocked } });
+
+      res.json({ message: isBlocked ? "User blocked." : "User unblocked." });
+    } catch (error) {
+      console.error("Block user error:", error);
+      res.status(500).json({ message: "Failed to update user." });
+    }
+  }
+);
+
 app.get("/", (req, res) => {
   res.send("WedPlan server is running!");
 });
