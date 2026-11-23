@@ -340,7 +340,7 @@ const getPublicVisibility = async () => {
 
 // GET /services
 // Public listing, search, filters, sorting, featured limit
-app.get("/services", verifyToken, async (req, res) => {
+app.get("/services", async (req, res) => {
   try {
     const {
       search = "",
