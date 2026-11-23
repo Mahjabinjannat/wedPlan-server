@@ -78,7 +78,7 @@ app.post(
       event = stripe.webhooks.constructEvent(
         req.body,
         req.headers["stripe-signature"],
-        process.env.STRIPE_WEBHOOK_SECRET
+        process.env.STRIPE_WEBHOOK_SECRET,
       );
     } catch (error) {
       console.error("Webhook signature failed:", error.message);
@@ -120,7 +120,7 @@ app.post(
               createdAt: new Date(),
             },
           },
-          { upsert: true }
+          { upsert: true },
         );
 
         // If Premium is still active, add 30 days to the current end date.
@@ -129,9 +129,11 @@ app.post(
           ? new Date(vendor.subscriptionExpiresAt)
           : null;
         const startFrom =
-          currentExpiry && currentExpiry > new Date() ? currentExpiry : new Date();
+          currentExpiry && currentExpiry > new Date()
+            ? currentExpiry
+            : new Date();
         const expiresAt = new Date(
-          startFrom.getTime() + PREMIUM_DAYS * 24 * 60 * 60 * 1000
+          startFrom.getTime() + PREMIUM_DAYS * 24 * 60 * 60 * 1000,
         );
 
         await users.updateOne(
@@ -141,14 +143,14 @@ app.post(
               subscriptionPlan: "premium",
               subscriptionExpiresAt: expiresAt,
             },
-          }
+          },
         );
       }
 
       if (event.type === "checkout.session.expired") {
         await transactions.updateOne(
           { stripeSessionId: event.data.object.id, status: "pending" },
-          { $set: { status: "expired" } }
+          { $set: { status: "expired" } },
         );
       }
 
@@ -157,7 +159,7 @@ app.post(
       console.error("Webhook handling failed:", error);
       res.status(500).json({ message: "Webhook handling failed." });
     }
-  }
+  },
 );
 
 app.use(express.json());
@@ -309,7 +311,7 @@ const getPublicVisibility = async () => {
     .toArray();
 
   const premiumVendorIds = new Set(
-    premiumVendors.map((vendor) => String(vendor._id))
+    premiumVendors.map((vendor) => String(vendor._id)),
   );
 
   const publicServices = await services
@@ -338,7 +340,7 @@ const getPublicVisibility = async () => {
 
 // GET /services
 // Public listing, search, filters, sorting, featured limit
-app.get("/services", async (req, res) => {
+app.get("/services", verifyToken, async (req, res) => {
   try {
     const {
       search = "",
@@ -424,7 +426,7 @@ app.get("/services", async (req, res) => {
 });
 
 // GET /services/:id
-app.get("/services/:id", async (req, res) => {
+app.get("/services/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -439,7 +441,7 @@ app.get("/services/:id", async (req, res) => {
         _id: new ObjectId(id),
         ...publicServiceFilter,
       },
-      { projection: publicServiceProjection }
+      { projection: publicServiceProjection },
     );
 
     if (!service) {
@@ -560,7 +562,7 @@ app.patch(
             status: "pending",
             updatedAt: new Date(),
           },
-        }
+        },
       );
 
       res.json({ message: "Service updated and sent for admin review." });
@@ -568,7 +570,7 @@ app.patch(
       console.error("Update service error:", error);
       res.status(500).json({ message: "Failed to update service." });
     }
-  }
+  },
 );
 
 // PATCH /vendor/services/:id/availability - turn a service on or off
@@ -603,17 +605,19 @@ app.patch(
 
       await services.updateOne(
         { _id: new ObjectId(id), vendorId: req.user.id },
-        { $set: { isActive, updatedAt: new Date() } }
+        { $set: { isActive, updatedAt: new Date() } },
       );
 
       res.json({
-        message: isActive ? "Service is now available." : "Service is now hidden.",
+        message: isActive
+          ? "Service is now available."
+          : "Service is now hidden.",
       });
     } catch (error) {
       console.error("Service availability error:", error);
       res.status(500).json({ message: "Failed to update availability." });
     }
-  }
+  },
 );
 
 // DELETE /vendor/services/:id - delete own service
@@ -643,7 +647,7 @@ app.delete(
       console.error("Delete service error:", error);
       res.status(500).json({ message: "Failed to delete service." });
     }
-  }
+  },
 );
 
 // ==========================================
@@ -671,7 +675,9 @@ app.patch(
       }
 
       if (target.role === "admin") {
-        return res.status(403).json({ message: "Admin accounts cannot be blocked." });
+        return res
+          .status(403)
+          .json({ message: "Admin accounts cannot be blocked." });
       }
 
       await users.updateOne({ _id: new ObjectId(id) }, { $set: { isBlocked } });
@@ -681,7 +687,7 @@ app.patch(
       console.error("Block user error:", error);
       res.status(500).json({ message: "Failed to update user." });
     }
-  }
+  },
 );
 
 // ==========================================
@@ -712,7 +718,11 @@ app.patch(
       }
 
       // A rejected service coming back must respect the vendor's plan limit.
-      if (service.status === "rejected" && status !== "rejected" && service.isActive) {
+      if (
+        service.status === "rejected" &&
+        status !== "rejected" &&
+        service.isActive
+      ) {
         const vendor = ObjectId.isValid(service.vendorId)
           ? await users.findOne({ _id: new ObjectId(service.vendorId) })
           : null;
@@ -724,14 +734,15 @@ app.patch(
         const allowed = await canActivateMoreServices(vendor, id);
         if (!allowed) {
           return res.status(403).json({
-            message: "This vendor already has 3 active services on the Free plan.",
+            message:
+              "This vendor already has 3 active services on the Free plan.",
           });
         }
       }
 
       await services.updateOne(
         { _id: new ObjectId(id) },
-        { $set: { status, updatedAt: new Date() } }
+        { $set: { status, updatedAt: new Date() } },
       );
 
       res.json({ message: `Service marked as ${status}.` });
@@ -739,7 +750,7 @@ app.patch(
       console.error("Service status error:", error);
       res.status(500).json({ message: "Failed to update service status." });
     }
-  }
+  },
 );
 
 // DELETE /admin/services/:id - remove an inappropriate service
@@ -766,7 +777,7 @@ app.delete(
       console.error("Admin delete service error:", error);
       res.status(500).json({ message: "Failed to delete service." });
     }
-  }
+  },
 );
 
 // Note: there is intentionally NO route to edit transactions.
@@ -796,7 +807,8 @@ app.post(
               unit_amount: PREMIUM_PRICE_CENTS,
               product_data: {
                 name: `WedPlan Premium (${PREMIUM_DAYS} days)`,
-                description: "Unlimited active services and Premium Vendor badge",
+                description:
+                  "Unlimited active services and Premium Vendor badge",
               },
             },
             quantity: 1,
@@ -825,7 +837,7 @@ app.post(
       console.error("Create checkout session error:", error);
       res.status(500).json({ message: "Failed to start payment." });
     }
-  }
+  },
 );
 
 // ==========================================
@@ -850,7 +862,9 @@ app.patch("/profile", verifyToken, async (req, res) => {
     const parsed = profileSchema.safeParse(req.body);
 
     if (!parsed.success) {
-      return res.status(400).json({ message: "Please enter valid profile details." });
+      return res
+        .status(400)
+        .json({ message: "Please enter valid profile details." });
     }
 
     const { name, image, businessName } = parsed.data;
@@ -866,13 +880,16 @@ app.patch("/profile", verifyToken, async (req, res) => {
       updates.businessName = businessName || "";
     }
 
-    await users.updateOne({ _id: new ObjectId(req.user.id) }, { $set: updates });
+    await users.updateOne(
+      { _id: new ObjectId(req.user.id) },
+      { $set: updates },
+    );
 
     // Keep the vendor name on their services in sync
     if (req.user.role === "vendor") {
       await services.updateMany(
         { vendorId: req.user.id },
-        { $set: { vendorName: updates.businessName || name } }
+        { $set: { vendorName: updates.businessName || name } },
       );
     }
 
